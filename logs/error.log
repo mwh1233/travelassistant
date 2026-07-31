@@ -1,0 +1,36 @@
+2026-06-03 12:16:07.919 | ERROR    | __main__:init_database:62 - ❌ 数据库初始化失败: connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+Multiple connection attempts failed. All failures were:
+- host: 'localhost', port: '5432', hostaddr: '127.0.0.1': connection failed: connection to server at "127.0.0.1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+- host: 'localhost', port: '5432', hostaddr: '::1': connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+2026-06-03 12:16:42.599 | ERROR    | __main__:init_database:62 - ❌ 数据库初始化失败: connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+Multiple connection attempts failed. All failures were:
+- host: 'localhost', port: '5432', hostaddr: '127.0.0.1': connection failed: connection to server at "127.0.0.1", port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+- host: 'localhost', port: '5432', hostaddr: '::1': connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+2026-06-03 12:17:23.390 | ERROR    | __main__:init_database:62 - 数据库初始化失败: connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+Multiple connection attempts failed. All failures were:
+- host: 'localhost', port: '5432', hostaddr: '127.0.0.1': connection failed: connection to server at "127.0.0.1", port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+- host: 'localhost', port: '5432', hostaddr: '::1': connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+2026-06-03 12:51:27.726 | ERROR    | __main__:init_database:62 - 数据库初始化失败: connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+Multiple connection attempts failed. All failures were:
+- host: 'localhost', port: '5432', hostaddr: '127.0.0.1': connection failed: connection to server at "127.0.0.1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+- host: 'localhost', port: '5432', hostaddr: '::1': connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+2026-06-03 12:57:21.081 | ERROR    | __main__:init_database:62 - 数据库初始化失败: connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+Multiple connection attempts failed. All failures were:
+- host: 'localhost', port: '5432', hostaddr: '127.0.0.1': connection failed: connection to server at "127.0.0.1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+- host: 'localhost', port: '5432', hostaddr: '::1': connection failed: connection to server at "::1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+2026-06-03 12:59:11.200 | ERROR    | __main__:init_database:62 - 数据库初始化失败: connection failed: connection to server at "::1", port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+Multiple connection attempts failed. All failures were:
+- host: 'localhost', port: '5432', hostaddr: '127.0.0.1': connection failed: connection to server at "127.0.0.1", port 5432 failed: ��������:  �û� "postgres" Password ��֤ʧ��
+- host: 'localhost', port: '5432', hostaddr: '::1': connection failed: connection to server at "::1", port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+2026-06-03 13:00:01.696 | ERROR    | __main__:init_database:62 - 数据库初始化失败: extension "vector" is not available
+HINT:  The extension must first be installed on the system where PostgreSQL is running.
+2026-06-16 10:38:21.912 | ERROR    | app.tools.rag_tools:search_destination_guide:110 - ❌ RAG 检索失败: ('Connection aborted.', ConnectionResetError(10054, '远程主机强迫关闭了一个现有的连接。', None, 10054, None))
+2026-06-16 16:59:31.371 | ERROR    | app.tools.rag_tools:search_food_recommendations:139 - ❌ 美食检索失败: ('Connection aborted.', ConnectionResetError(10054, '远程主机强迫关闭了一个现有的连接。', None, 10054, None))
