@@ -2,6 +2,8 @@
 TravelState 状态定义
 使用 TypedDict + Annotated 实现类型安全和状态合并
 """
+import time
+
 from typing import Annotated, Literal, Optional
 from typing_extensions import TypedDict, NotRequired
 from operator import add
@@ -177,8 +179,6 @@ class TravelState(AgentState):
 
 def create_initial_state(user_id: str, session_id: str) -> TravelState:
     """创建初始状态"""
-    import time
-
     return TravelState(
         messages=[],
         current_step="requirement_collection",
