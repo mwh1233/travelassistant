@@ -178,6 +178,7 @@ class TravelState(AgentState):
 def create_initial_state(user_id: str, session_id: str) -> TravelState:
     """创建初始状态"""
     import time
+    timestamp = time.time()
 
     return TravelState(
         messages=[],
@@ -189,6 +190,6 @@ def create_initial_state(user_id: str, session_id: str) -> TravelState:
         approval_pending=False,
         user_id=user_id,
         session_id=session_id,
-        created_at=time.time(),
-        updated_at=time.time()
+        created_at=timestamp,
+        updated_at=timestamp
     )
