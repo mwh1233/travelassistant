@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.utils.logger import app_logger
 from app.api.v1 import conversations, chat, users
+from app.core.skills import load_skills
 
 
 @asynccontextmanager
@@ -23,6 +24,9 @@ async def lifespan(app: FastAPI):
     from app.core.store import store_lifespan
 
     app_logger.info("🚀 启动应用...")
+    loaded_skills = load_skills()
+    app.state.skills = loaded_skills
+    app_logger.info(f"✅ Skills 已加载: {list(loaded_skills)}")
 
     async with checkpointer_lifespan():
         app_logger.info("✅ Checkpointer 已就绪")

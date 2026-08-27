@@ -18,6 +18,13 @@ from app.core.state import (
 from app.utils.logger import app_logger
 from typing import Literal, Optional
 
+VALID_TRANSPORT_TYPES = frozenset({"flight", "train", "driving"})
+TRANSPORT_LABELS = {
+    "flight": "航班",
+    "train": "高铁",
+    "driving": "自驾"
+}
+
 # ============== 1️.需求收集工具 ==============
 
 @tool
@@ -175,7 +182,7 @@ def select_transport_tool(
     app_logger.info(f"用户选择交通方式: {transport_type}")
 
     # 验证枚举值
-    if transport_type not in ["flight", "train", "driving"]:
+    if transport_type not in VALID_TRANSPORT_TYPES:
         return Command(update={
             "messages": [
                 ToolMessage(
@@ -185,16 +192,10 @@ def select_transport_tool(
             ]
         })
 
-    transport_labels = {
-        "flight": "航班",
-        "train": "高铁",
-        "driving": "自驾"
-    }
-
     return Command(update={
         "messages": [
             ToolMessage(
-                content=f"交通方式已确认：{transport_labels[transport_type]}",
+                content=f"交通方式已确认：{TRANSPORT_LABELS[transport_type]}",
                 tool_call_id=runtime.tool_call_id
             )
         ],
