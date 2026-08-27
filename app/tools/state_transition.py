@@ -175,7 +175,7 @@ def select_transport_tool(
     app_logger.info(f"用户选择交通方式: {transport_type}")
 
     # 验证枚举值
-    if transport_type not in ["flight", "train", "driving"]:
+    if transport_type in ["flight", "train", "driving"]:
         return Command(update={
             "messages": [
                 ToolMessage(
