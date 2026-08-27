@@ -178,6 +178,7 @@ class TravelState(AgentState):
 def create_initial_state(user_id: str, session_id: str) -> TravelState:
     """创建初始状态"""
     import time
+    print(f"创建旅行状态: {user_id}/{session_id}")
 
     return TravelState(
         messages=[],
