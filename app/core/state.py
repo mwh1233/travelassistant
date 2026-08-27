@@ -181,7 +181,7 @@ def create_initial_state(user_id: str, session_id: str) -> TravelState:
 
     return TravelState(
         messages=[],
-        current_step="requirement_collection",
+        current_step="transport_planning",
         destination_options=[],
         transport_options=[],
         accommodation_options=[],
