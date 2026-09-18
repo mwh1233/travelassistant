@@ -3,6 +3,7 @@ Document loading and preprocessing utilities.
 """
 from pathlib import Path
 from typing import List
+from datetime import datetime, timezone
 
 from langchain_core.documents import Document
 
@@ -52,12 +53,20 @@ class DocumentManager:
 
             content = self._read_text_with_fallback(file_path)
             relative_path = file_path.relative_to(self.base_dir)
+            modified_at = datetime.fromtimestamp(
+                file_path.stat().st_mtime,
+                tz=timezone.utc,
+            ).isoformat()
             documents.append(
                 Document(
                     page_content=content,
                     metadata={
                         "source": str(file_path),
+                        "source_title": file_path.stem,
+                        "source_url": None,
                         "relative_path": str(relative_path),
+                        "updated_at": modified_at,
+                        "valid_until": None,
                     },
                 )
             )

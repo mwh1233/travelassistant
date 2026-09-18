@@ -5,6 +5,8 @@
 import os
 import json
 import httpx
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
@@ -16,7 +18,34 @@ AMAP_API_KEY = os.getenv("AMAP_API_KEY")
 AMAP_WEATHER_URL = "https://restapi.amap.com/v3/weather/weatherInfo"
 
 
-@mcp.tool()
+async def get_current_date(timezone: str = "Asia/Shanghai") -> str:
+    """
+    获取当前日期和常用相对日期。
+
+    Args:
+        timezone: IANA 时区，默认 Asia/Shanghai。
+
+    Returns:
+        JSON 格式的当前日期、明天、后天和一周后日期。
+    """
+
+    try:
+        tz = ZoneInfo(timezone)
+    except Exception:
+        tz = ZoneInfo("Asia/Shanghai")
+        timezone = "Asia/Shanghai"
+
+    today = datetime.now(tz).date()
+    result = {
+        "timezone": timezone,
+        "today": today.isoformat(),
+        "tomorrow": (today + timedelta(days=1)).isoformat(),
+        "day_after_tomorrow": (today + timedelta(days=2)).isoformat(),
+        "next_week": (today + timedelta(days=7)).isoformat(),
+    }
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 async def get_weather_forecast(city_adcode: str) -> str:
     """
     查询城市未来天气预报
@@ -78,6 +107,10 @@ async def get_weather_forecast(city_adcode: str) -> str:
             return json.dumps({"error": "请求超时"}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+mcp.tool()(get_current_date)
+mcp.tool()(get_weather_forecast)
 
 
 if __name__ == "__main__":

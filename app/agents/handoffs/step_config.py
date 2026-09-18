@@ -10,8 +10,6 @@ from app.tools.state_transition import (
     select_transport_tool,
     select_accommodation_tool,
     select_food_tool,
-    generate_itinerary_tool,
-    summarize_budget_tool,
     generate_order_tool,
     go_back_to_step,
     go_back_to_requirement,
@@ -23,6 +21,8 @@ from app.tools.state_transition import (
     go_back_to_budget,
     check_current_progress
 )
+from app.tools.planning_tools import generate_itinerary_tool, summarize_budget_tool
+from app.tools.approval_tools import APPROVAL_TOOLS
 from app.tools.mcp_tools import get_hotel_tools, get_weather_tools, get_search_tools, get_date_tools
 from app.tools.memory_tools import update_travel_style_tool, update_dietary_restriction_tool, \
     update_food_preference_tool, add_travel_record_tool, update_accommodation_preference_tool
@@ -563,6 +563,7 @@ async def get_step_config():
 """,
             "tools": [
                 generate_order_tool,
+                *APPROVAL_TOOLS,
                 go_back_to_destination,
                 go_back_to_requirement,
                 go_back_to_transport,

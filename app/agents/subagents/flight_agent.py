@@ -13,8 +13,12 @@ from app.utils.logger import app_logger
 
 async def _get_aviation_tools():
     """获取航班相关的MCP工具"""
-    manager = await get_mcp_client()
-    all_tools = await manager.get_tools()
+    try:
+        manager = await get_mcp_client(servers=["VariFlight-Aviation", "search"])
+        all_tools = await manager.get_tools()
+    except Exception as exc:
+        app_logger.warning(f"Flight MCP tools unavailable, falling back to empty tool set: {exc}")
+        return []
     
     # 筛选航班工具
     aviation_tools = [

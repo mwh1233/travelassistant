@@ -12,8 +12,12 @@ from app.utils.logger import app_logger
 
 async def _get_railway_tools():
     """获取高铁相关的MCP工具"""
-    manager = await get_mcp_client()
-    all_tools = await manager.get_tools()
+    try:
+        manager = await get_mcp_client(servers=["12306-mcp", "search"])
+        all_tools = await manager.get_tools()
+    except Exception as exc:
+        app_logger.warning(f"Railway MCP tools unavailable, falling back to empty tool set: {exc}")
+        return []
 
     # 筛选高铁工具
     railway_tools = [

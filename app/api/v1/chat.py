@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.schemas.message import MessageCreate
+from app.schemas.streaming import StreamEvent
 from app.api.dependencies import get_current_user
 from app.agents.handoffs.travel_agent import create_travel_agent
 from app.utils.logger import app_logger
@@ -48,6 +49,26 @@ def sse(data: dict) -> str:
     SSE 标准 data 帧
     """
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def stream_event(
+        conversation_id: str,
+        event_type: str,
+        payload: dict = None,
+        step: str = None,
+        **extra
+) -> str:
+    """Build a canonical SSE event while preserving legacy top-level fields."""
+
+    payload = payload or {}
+    event = StreamEvent(
+        type=event_type,
+        conversation_id=conversation_id,
+        step=step,
+        payload=payload,
+    ).model_dump()
+    event.update(extra)
+    return sse(event)
 
 
 async def generate_sse_stream(
@@ -90,18 +111,78 @@ async def generate_sse_stream(
                 if chunk and hasattr(chunk, "content") and chunk.content:
                     token = chunk.content
                     assistant_message += token
-                    yield sse({
-                        "type": "token",
-                        "content": token,
-                    })
+                    yield stream_event(
+                        conversation_id,
+                        "token",
+                        payload={"content": token},
+                        content=token,
+                    )
 
             # 或者捕获工具调用信息
             elif kind == "on_tool_start":
                 tool_name = event.get("name", "")
-                yield sse({
-                    "type": "tool_call",
-                    "tool": tool_name,
-                })
+                yield stream_event(
+                    conversation_id,
+                    "tool_call",
+                    payload={"tool": tool_name},
+                    tool=tool_name,
+                )
+
+            elif kind == "on_tool_end":
+                tool_name = event.get("name", "")
+                output = event.get("data", {}).get("output")
+                yield stream_event(
+                    conversation_id,
+                    "tool_result",
+                    payload={
+                        "tool": tool_name,
+                        "output_preview": str(output)[:500] if output is not None else "",
+                    },
+                    tool=tool_name,
+                )
+
+            elif kind == "on_chain_start":
+                step_name = event.get("name")
+                if step_name:
+                    yield stream_event(
+                        conversation_id,
+                        "step_started",
+                        step=step_name,
+                        payload={"step": step_name},
+                    )
+
+            elif kind == "on_chain_end":
+                step_name = event.get("name")
+                output = event.get("data", {}).get("output")
+                if isinstance(output, dict):
+                    if output.get("structured_itinerary"):
+                        yield stream_event(
+                            conversation_id,
+                            "itinerary_delta",
+                            step=step_name,
+                            payload=output["structured_itinerary"],
+                        )
+                    if output.get("structured_budget"):
+                        yield stream_event(
+                            conversation_id,
+                            "budget_update",
+                            step=step_name,
+                            payload=output["structured_budget"],
+                        )
+                    if output.get("approval_pending") and output.get("pending_approval"):
+                        yield stream_event(
+                            conversation_id,
+                            "approval_required",
+                            step=step_name,
+                            payload=output["pending_approval"],
+                        )
+                if step_name:
+                    yield stream_event(
+                        conversation_id,
+                        "step_completed",
+                        step=step_name,
+                        payload={"step": step_name},
+                    )
 
             await asyncio.sleep(0)
 
@@ -114,14 +195,16 @@ async def generate_sse_stream(
                 assistant_message,
             )
 
-        yield sse({"type": "done"})
+        yield stream_event(conversation_id, "done")
 
     except Exception as e:
         app_logger.exception("❌ SSE 流式对话错误")
-        yield sse({
-            "type": "error",
-            "message": str(e),
-        })
+        yield stream_event(
+            conversation_id,
+            "error",
+            payload={"message": str(e)},
+            message=str(e),
+        )
 
 
 

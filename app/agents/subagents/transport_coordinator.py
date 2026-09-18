@@ -26,8 +26,12 @@ from app.utils.logger import app_logger
 
 async def _get_auxiliary_tools():
     """获取辅助工具"""
-    manager = await get_mcp_client()
-    all_tools = await manager.get_tools()
+    try:
+        manager = await get_mcp_client(servers=["weather", "search", "amap"])
+        all_tools = await manager.get_tools()
+    except Exception as exc:
+        app_logger.warning(f"Auxiliary MCP tools unavailable, falling back to empty tool set: {exc}")
+        return []
 
     # 筛选辅助工具
     aux_tools = [

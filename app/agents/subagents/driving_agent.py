@@ -13,8 +13,12 @@ from app.utils.logger import app_logger
 
 async def _get_amap_tools():
     """获取高德地图相关工具"""
-    manager = await get_mcp_client()
-    all_tools = await manager.get_tools()
+    try:
+        manager = await get_mcp_client(servers=["amap"])
+        all_tools = await manager.get_tools()
+    except Exception as exc:
+        app_logger.warning(f"Amap MCP tools unavailable, falling back to empty tool set: {exc}")
+        return []
 
     # 筛选地图工具
     amap_tools = [

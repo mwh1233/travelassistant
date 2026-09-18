@@ -1,87 +1,47 @@
-"""
-Handoffs 主 Agent
-一个 Agent + 中间件实现整个旅行规划流程
-"""
-from app.tools.mcp_tools import get_all_mcp_tools
-from app.tools.router_query import query_destination_info
-from app.tools.transport_query import query_transport_options
-from app.tools.memory_tools import MEMORY_TOOLS
-from langchain.agents import create_agent
-from app.config import settings
-from app.core.state import TravelState
-from app.core.checkpointer import get_checkpointer
+"""Factory for the main graph-based travel planning agent."""
+
+from __future__ import annotations
+
+import asyncio
+
 from langchain_openai import ChatOpenAI
-from app.core.middleware import create_step_config_middleware
-from app.tools.state_transition import (
-    record_requirement_tool,
-    select_destination_tool,
-    select_transport_tool,
-    select_accommodation_tool,
-    select_food_tool,
-    generate_itinerary_tool,
-    summarize_budget_tool,
-    generate_order_tool,
-    ALL_ROLLBACK_TOOLS
-)
-from app.utils.logger import app_logger
 from langgraph.checkpoint.memory import MemorySaver
 
-# ============== 初始化 LLM ==============
+from app.agents.graphs.travel_planner_graph import create_travel_planner_graph
+from app.config import settings
+from app.core.checkpointer import get_checkpointer
+from app.utils.logger import app_logger
 
-def get_llm():
-    """获取配置好的千问模型"""
+
+def get_llm() -> ChatOpenAI:
+    """Return the configured chat model."""
+
     return ChatOpenAI(
         model=settings.qwen_model_name,
         base_url=settings.qwen_base_url,
         api_key=settings.dashscope_api_key,
         temperature=settings.qwen_temperature,
         max_tokens=settings.qwen_max_tokens,
-        streaming=True
+        streaming=True,
     )
 
-
-# ============== 创建 Agent ==============
 
 async def create_travel_agent():
-    """
-    创建 Handoffs 旅行规划 Agent
+    """Create the explicit LangGraph travel planning agent."""
 
-    返回：
-        编译好的 Agent（可直接调用）
-    """
+    app_logger.info("Creating graph-based Travel Agent...")
 
-    app_logger.info("创建 Travel Agent（带审批）...")
+    try:
+        checkpointer = await asyncio.wait_for(get_checkpointer(), timeout=3)
+        app_logger.info("Using Postgres checkpointer for Travel Agent")
+    except Exception as exc:
+        app_logger.warning(f"Postgres checkpointer unavailable, falling back to memory: {exc}")
+        checkpointer = MemorySaver()
 
-    llm = get_llm()
-    all_mcp_tools = await get_all_mcp_tools()
-
-    # 异步创建中间件（预加载配置）
-    step_config_middleware = await create_step_config_middleware()
-
-    all_tools = [
-        record_requirement_tool,
-        select_destination_tool,
-        select_transport_tool,
-        select_accommodation_tool,
-        select_food_tool,
-        generate_itinerary_tool,
-        summarize_budget_tool,
-        generate_order_tool,
-        *MEMORY_TOOLS,
-        *ALL_ROLLBACK_TOOLS,
-        query_destination_info,
-        query_transport_options,
-        *all_mcp_tools,
-    ]
-
-    agent = create_agent(
-        model=llm,
-        tools=all_tools,
-        state_schema=TravelState,
-        middleware=[step_config_middleware],  # 使用预加载的中间件
-        checkpointer=MemorySaver(),
+    agent = await create_travel_planner_graph(
+        model_factory=get_llm,
+        checkpointer=checkpointer,
     )
 
-    app_logger.info("✅ Travel Agent（带审批）创建完成")
-
+    app_logger.info("Travel Agent graph created")
     return agent

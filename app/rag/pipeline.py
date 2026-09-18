@@ -120,3 +120,22 @@ class AdvancedRAGPipeline:
         self.cache.set(query, self.top_k, final_docs)
 
         return final_docs
+
+    def retrieve_with_sources(self, query: str) -> list[dict]:
+        """Retrieve documents and return serializable source-aware contexts."""
+
+        documents = self.retrieve(query)
+        contexts = []
+        for rank, document in enumerate(documents, 1):
+            metadata = dict(document.metadata or {})
+            contexts.append({
+                "rank": rank,
+                "content": document.page_content,
+                "source": metadata.get("source"),
+                "source_title": metadata.get("source_title") or metadata.get("relative_path"),
+                "source_url": metadata.get("source_url"),
+                "category": metadata.get("category"),
+                "updated_at": metadata.get("updated_at"),
+                "valid_until": metadata.get("valid_until"),
+            })
+        return contexts
