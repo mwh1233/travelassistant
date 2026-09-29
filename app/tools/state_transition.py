@@ -17,8 +17,6 @@ from app.core.state import (
 )
 from app.utils.logger import app_logger
 from typing import Literal, Optional
-from app.planner.budget_estimator import estimate_budget, format_budget_summary
-from app.planner.itinerary_planner import build_itinerary_plan, format_itinerary_summary
 
 # ============== 1️.需求收集工具 ==============
 
@@ -303,137 +301,18 @@ def select_food_tool(
     })
 
 
-# ============== 6️.行程生成工具 ==============
-
-@tool
-def generate_itinerary_tool(
-        runtime: ToolRuntime[None, TravelState] = None
-) -> Command:
-    """
-    生成完整行程安排，并转换到预算汇总步骤。
-
-    此工具会综合：
-    - 用户需求（天数、人数、风格）
-    - 目的地信息
-    - 交通信息
-    - 住宿信息
-    - 餐饮信息
-
-    生成详细的每日行程。
-    """
-
-    app_logger.info("开始生成行程...")
-
-    state = runtime.state
-
-    # 检查必要信息是否完整
-    required_fields = [
-        "user_requirement",
-        "selected_destination",
-        "selected_transport",
-        "selected_accommodation_types",
-        "selected_food_types"
-    ]
-
-    missing = [f for f in required_fields if f not in state or state[f] is None]
-    if missing:
-        return Command(update={
-            "messages": [
-                ToolMessage(
-                    content=f"❌ 信息不完整，缺少：{', '.join(missing)}",
-                    tool_call_id=runtime.tool_call_id
-                )
-            ]
-        })
-
-    # 生成行程（简化版，实际应调用 LLM）
-    travel_days = state["user_requirement"]["travel_days"]
-    itinerary = []
-
-    for day in range(1, travel_days + 1):
-        itinerary.append({
-            "day_number": day,
-            "activities": [f"第{day}天活动1", f"第{day}天活动2"],
-            "meals": ["早餐", "午餐", "晚餐"],
-            "accommodation": "酒店名称"
-        })
-
-    return Command(update={
-        "messages": [
-            ToolMessage(
-                content=f"已生成 {travel_days} 天详细行程！",
-                tool_call_id=runtime.tool_call_id
-            )
-        ],
-        "itinerary": itinerary,
-        "current_step": "budget_summarization"  # 跳转到步骤7
-    })
+# ============== 6/7 行程生成与预算汇总 ==============
+#
+# 这两个工具此前在本模块与 app/tools/planning_tools.py 中各有一份实现，
+# 生产链路（step_config）引用 planning_tools 版，而测试引用本模块版，
+# 导致「测试测 A、线上跑 B」。重复实现已删除，唯一实现见：
+#   app/tools/planning_tools.py: generate_itinerary_tool / summarize_budget_tool
+#
+# 注意：本模块版本写入的是扁平占位数据（itinerary 只有 activities/meals），
+# 而 planning_tools 版本写入结构化行程/预算（structured_itinerary/structured_budget），
+# 后者才被 grader 与前端消费。
 
 
-# ============== 7️.预算汇总工具 ==============
-
-@tool
-def summarize_budget_tool(
-        runtime: ToolRuntime[None, TravelState] = None
-) -> Command:
-    """
-    汇总各项费用，生成预算明细，并转换到订单生成步骤。
-
-    预算明细包括：
-    - 交通费用
-    - 住宿费用
-    - 餐饮费用
-    - 景点门票
-    - 其他杂费
-    """
-
-    app_logger.info("开始计算预算...")
-
-    state = runtime.state
-
-    # 简化版计算（实际应基于查询结果）
-    requirement = state["user_requirement"]
-    try:
-        total_people = int(requirement.get("adult_count") or 0) + int(requirement.get("children_count") or 0)
-    except (TypeError, ValueError, AttributeError):
-        total_people = 0
-    travel_days = requirement["travel_days"]
-
-    # 估算费用
-    transport_cost = 500 * total_people  # 人均交通
-    accommodation_cost = 300 * travel_days * total_people  # 人均住宿
-    food_cost = 150 * travel_days * total_people  # 人均餐饮
-    attractions_cost = 200 * travel_days * total_people  # 人均门票
-    misc_cost = 100 * travel_days * total_people  # 人均杂费
-
-    total_cost = transport_cost + accommodation_cost + food_cost + attractions_cost + misc_cost
-
-    budget_breakdown = {
-        "transport": transport_cost,
-        "accommodation": accommodation_cost,
-        "food": food_cost,
-        "attractions": attractions_cost,
-        "misc": misc_cost,
-        "total": total_cost
-    }
-
-    return Command(update={
-        "messages": [
-            ToolMessage(
-                content=f"预算汇总完成！\n"
-                        f"总计：{total_cost:.2f} 元\n"
-                        f"   - 交通：{transport_cost:.2f}\n"
-                        f"   - 住宿：{accommodation_cost:.2f}\n"
-                        f"   - 餐饮：{food_cost:.2f}\n"
-                        f"   - 门票：{attractions_cost:.2f}\n"
-                        f"   - 其他：{misc_cost:.2f}",
-                tool_call_id=runtime.tool_call_id
-            )
-        ],
-        "budget": budget_breakdown,
-        "current_step": "order_generation"  # 跳转到步骤8
-    })
-    
 # ============== 8️.订单生成工具 ==============
 
 @tool
@@ -678,14 +557,18 @@ STEP_LABELS = {
 }
 
 # 每个步骤回退时需要清除的状态字段
+#
+# 关键：必须与各工具 Command.update 实际写入的键保持一致，否则回退后会留下
+# 陈旧数据（stale_state）。planning_tools 会同时写 legacy 字段与 structured_*
+# 字段，因此两者都要清理，见 docs/agent-eval-design.md（L0 回退清理矩阵）。
 STEP_STATE_FIELDS = {
     "requirement_collection": ["user_requirement"],
     "destination_recommendation": ["selected_destination", "destination_options"],
     "transport_planning": ["selected_transport", "transport_options"],
     "accommodation_planning": ["selected_accommodation_types", "accommodation_options"],
     "food_planning": ["selected_food_types", "food_options"],
-    "itinerary_generation": ["itinerary"],
-    "budget_summarization": ["budget"],
+    "itinerary_generation": ["itinerary", "structured_itinerary"],
+    "budget_summarization": ["budget", "structured_budget"],
     "order_generation": ["order_id"]
 }
 

@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Evaluation artifacts (trajectories + generated reports are not source)
+evals/reports/
+evals/traces/

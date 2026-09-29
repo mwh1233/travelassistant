@@ -35,12 +35,13 @@ from app.tools.state_transition import (
     select_transport_tool,
     select_accommodation_tool,
     select_food_tool,
-    generate_itinerary_tool,
-    summarize_budget_tool,
     generate_order_tool,
     go_back_to_requirement,
     go_back_to_destination
 )
+# 行程/预算工具的唯一实现在 planning_tools（生产链路引用的是这一版），
+# 见 docs/agent-eval-design.md（P0-6：测试测 A、线上跑 B）。
+from app.tools.planning_tools import generate_itinerary_tool, summarize_budget_tool
 
 load_dotenv()
 

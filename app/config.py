@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     amap_api_key: str = Field(default="", alias="AMAP_API_KEY")
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
 
+    # Evaluation trajectory capture (see docs/agent-eval-design.md, P0-1).
+    # Disabled by default: SSE behaviour must not change unless explicitly asked for.
+    eval_trace_enabled: bool = Field(default=False, alias="EVAL_TRACE_ENABLED")
+    eval_trace_path: str = Field(
+        default="evals/traces/online.jsonl",
+        alias="EVAL_TRACE_PATH",
+    )
+
     @field_validator("debug", mode="before")
     @classmethod
     def normalize_debug(cls, value: Any) -> Any:

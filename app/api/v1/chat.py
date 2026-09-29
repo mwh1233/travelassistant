@@ -16,6 +16,8 @@ from app.schemas.message import MessageCreate
 from app.schemas.streaming import StreamEvent
 from app.api.dependencies import get_current_user
 from app.agents.handoffs.travel_agent import create_travel_agent
+from app.config import settings
+from app.observability.trace import TraceCollector, tee_events, write_jsonl
 from app.utils.logger import app_logger
 
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -94,15 +96,36 @@ async def generate_sse_stream(
         }
 
         # 4. 使用 astream_events 获取更细粒度的流式输出
-        async for event in agent.astream_events(
-                input_data,
-                config={
-                    "configurable": {
-                        "thread_id": conversation_id
-                    }
+        # 评测旁路 tee：默认关闭，开启后把同一条事件流落成结构化轨迹（JSONL）。
+        # 它只消费事件副本，不参与 SSE 的组装，因此不会改变接口行为。
+        collector = None
+        if settings.eval_trace_enabled:
+            collector = TraceCollector(
+                conversation_id=conversation_id,
+                user_id=str(user.id),
+                mode="live",
+                model=settings.qwen_model_name,
+                model_params={
+                    "temperature": settings.qwen_temperature,
+                    "max_tokens": settings.qwen_max_tokens,
                 },
+            )
+
+        stream_config = {
+            "configurable": {
+                "thread_id": conversation_id
+            }
+        }
+
+        event_stream = agent.astream_events(
+                input_data,
+                config=stream_config,
                 version="v2"
-        ):
+        )
+        if collector is not None:
+            event_stream = tee_events(event_stream, collector)
+
+        async for event in event_stream:
             kind = event.get("event")
 
             # 捕获 LLM 流式输出
@@ -185,6 +208,19 @@ async def generate_sse_stream(
                     )
 
             await asyncio.sleep(0)
+
+        # 5.5 落库轨迹（仅评测模式）
+        if collector is not None:
+            final_state = None
+            try:
+                snapshot = await agent.aget_state(stream_config)
+                final_state = getattr(snapshot, "values", None)
+            except Exception as exc:  # pragma: no cover - best effort only
+                app_logger.debug(f"trace final_state unavailable: {exc}")
+            try:
+                write_jsonl(collector.to_record(final_state), settings.eval_trace_path)
+            except Exception as exc:  # pragma: no cover - never break the response
+                app_logger.warning(f"Failed to persist trajectory: {exc}")
 
         # 5. 保存 AI 回复
         if assistant_message.strip():

@@ -106,6 +106,12 @@ def _build_step_node(
             )
             result = await agent.ainvoke(dict(state))
         if isinstance(result, dict):
+            # `_route_current_step` 对非法 current_step 会回落到 requirement_collection，
+            # 但状态里仍残留那个非法值，下一轮会再次回落。
+            # 这里把节点自身的合法步骤写回：若工具没有推进步骤，则纠正为当前步骤；
+            # 若工具已推进（Command.update 携带合法 current_step），则保留工具的结果。
+            if result.get("current_step") not in STEP_SEQUENCE:
+                result = {**result, "current_step": step_name}
             return result
         return {"messages": [AIMessage(content=str(result))]}
 
