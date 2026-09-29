@@ -78,7 +78,52 @@ def test_dataset_schema_is_clean():
     result = checks.check_dataset_schema()
 
     assert result.passed, result.detail
-    assert sum(info["rows"] for info in result.data["files"].values()) == 250
+    # Tripwire: 120 travel + 60 mcp + 60 rag + 10 trajectory + 8 multiturn.
+    # Bump deliberately when a dataset is genuinely extended.
+    assert sum(info["rows"] for info in result.data["files"].values()) == 258
+
+
+def test_dataset_schema_accepts_turn_based_scenarios(tmp_path):
+    """A multi-turn row carries ``turns`` instead of a flat ``input``."""
+
+    row = {
+        "id": "mt_ok",
+        "type": "multiturn",
+        "split": "regression",
+        "version": checks.DATASET_VERSION,
+        "initial_state": {"current_step": "requirement_collection"},
+        "metadata": {"difficulty": "medium", "multi_turn": True},
+        "turns": [{"input": "第一轮"}, {"input": "第二轮"}],
+    }
+    (tmp_path / "mt.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    result = checks.check_dataset_schema(dataset_dir=tmp_path)
+
+    assert result.passed, result.detail
+
+
+def test_dataset_schema_rejects_empty_turn_input(tmp_path):
+    """Negative control: a turn with no input must be rejected."""
+
+    row = {
+        "id": "mt_bad",
+        "type": "multiturn",
+        "split": "regression",
+        "version": checks.DATASET_VERSION,
+        "initial_state": {"current_step": "requirement_collection"},
+        "metadata": {"difficulty": "medium", "multi_turn": True},
+        "turns": [{"input": "第一轮"}, {"input": ""}],
+    }
+    (tmp_path / "mt.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    result = checks.check_dataset_schema(dataset_dir=tmp_path)
+
+    assert not result.passed
+    assert "turns[1] input 为空" in result.detail
 
 
 def test_dataset_schema_catches_missing_fields(tmp_path):
@@ -115,6 +160,95 @@ def test_dataset_schema_rejects_unflagged_illegal_step(tmp_path):
 
     row["metadata"]["deliberately_illegal_initial_step"] = True
     (tmp_path / "bogus.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    assert checks.check_dataset_schema(dataset_dir=tmp_path).passed
+
+
+def test_feedback_schema_absent_is_not_a_failure(tmp_path):
+    """No promoted cases yet is a valid state, not a broken dataset."""
+
+    result = checks.check_feedback_schema(dataset_dir=tmp_path)
+
+    assert result.passed
+    assert result.data["rows"] == 0
+
+
+def test_feedback_schema_accepts_promoted_row(tmp_path):
+    row = {
+        "id": "fb_rv_1",
+        "type": "feedback",
+        "split": "regression",
+        "version": "1.0",
+        "source_trace_id": "t-1",
+        "reviewer": "alice",
+        "correct_behaviour": "必须先确认再下单",
+        "origin": {"kind": "online_review", "item_id": "rv_1"},
+    }
+    (tmp_path / "regression_feedback.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    result = checks.check_feedback_schema(dataset_dir=tmp_path)
+
+    assert result.passed, result.detail
+
+
+def test_feedback_schema_catches_missing_reviewer(tmp_path):
+    """Negative control: a promoted row with no reviewer is rejected."""
+
+    row = {
+        "id": "fb_rv_1",
+        "type": "feedback",
+        "split": "regression",
+        "version": "1.0",
+        "source_trace_id": "t-1",
+        "correct_behaviour": "必须先确认",
+        "origin": {"kind": "online_review"},
+    }
+    (tmp_path / "regression_feedback.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    result = checks.check_feedback_schema(dataset_dir=tmp_path)
+
+    assert not result.passed
+    assert "reviewer" in result.detail
+
+
+def test_feedback_schema_rejects_wrong_split(tmp_path):
+    row = {
+        "id": "fb_rv_1",
+        "type": "feedback",
+        "split": "smoke",
+        "version": "1.0",
+        "source_trace_id": "t-1",
+        "reviewer": "alice",
+        "correct_behaviour": "x",
+        "origin": {"kind": "online_review"},
+    }
+    (tmp_path / "regression_feedback.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    assert not checks.check_feedback_schema(dataset_dir=tmp_path).passed
+
+
+def test_feedback_dataset_is_not_treated_as_a_scenario(tmp_path):
+    """Promoted rows must not be fed to the scenario schema check."""
+
+    row = {
+        "id": "fb_rv_1",
+        "type": "feedback",
+        "split": "regression",
+        "version": "1.0",
+        "source_trace_id": "t-1",
+        "reviewer": "alice",
+        "correct_behaviour": "x",
+        "origin": {"kind": "online_review"},
+    }
+    (tmp_path / "regression_feedback.jsonl").write_text(
         json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 

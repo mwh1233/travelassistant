@@ -683,6 +683,13 @@ def check_capability_vocabulary(dataset_dir: Path | None = None) -> CheckResult:
             candidates += [
                 str(step["tool"]) for step in row.get("script") or [] if isinstance(step, dict) and step.get("tool")
             ]
+            # Fault-injection targets are tool names too; a typo here means the
+            # fault silently never fires.
+            candidates += [
+                str(fault["target"])
+                for fault in row.get("faults") or []
+                if isinstance(fault, dict) and fault.get("target") and fault.get("target") != "*"
+            ]
             candidates += [
                 str(name) for name in (row.get("expect") or {}).get("tools_called") or []
             ]
@@ -722,6 +729,11 @@ REQUIRED_DATASET_FIELDS = ("id", "type", "split", "version", "input", "initial_s
 ALLOWED_SPLITS = ("smoke", "regression", "challenge", "safety", "holdout")
 DATASET_VERSION = "0.2.0"
 
+#: ``*.jsonl`` files living in the dataset directory that are **not** agent
+#: scenarios and therefore not subject to the scenario contract. Each has its
+#: own schema check (``judge_gold.jsonl`` -> ``L0.judge_gold_schema``).
+NON_SCENARIO_DATASETS = ("judge_gold.jsonl", "regression_feedback.jsonl")
+
 
 def check_dataset_schema(dataset_dir: Path | None = None) -> CheckResult:
     """Dataset rows must carry split / version / initial_state / metadata.
@@ -738,6 +750,8 @@ def check_dataset_schema(dataset_dir: Path | None = None) -> CheckResult:
     seen_ids: dict[str, str] = {}
 
     for path in sorted(root.glob("*.jsonl")):
+        if path.name in NON_SCENARIO_DATASETS:
+            continue
         rows = list(_iter_jsonl(path))
         splits: dict[str, int] = {}
         versions: set[str] = set()
@@ -750,9 +764,23 @@ def check_dataset_schema(dataset_dir: Path | None = None) -> CheckResult:
             seen_ids[row_id] = path.name
 
             for field in REQUIRED_DATASET_FIELDS:
+                if field in ("input",) and row.get("turns"):
+                    continue
                 if field not in row:
                     failures.append(f"{path.name}:{row_id} 缺字段 {field}")
-            if not row.get("input"):
+
+            # Two dataset shapes share this contract: single-shot rows carry a
+            # flat ``input``; multi-turn scenarios carry a non-empty ``turns``
+            # list whose every entry has an ``input``.
+            turns = row.get("turns")
+            if turns:
+                if not isinstance(turns, list):
+                    failures.append(f"{path.name}:{row_id} turns 不是列表")
+                else:
+                    for index, turn in enumerate(turns):
+                        if not (turn or {}).get("input"):
+                            failures.append(f"{path.name}:{row_id} turns[{index}] input 为空")
+            elif not row.get("input"):
                 failures.append(f"{path.name}:{row_id} input 为空")
 
             split = row.get("split")
@@ -814,6 +842,210 @@ def _iter_jsonl(path: Path):
                 continue
 
 
+def check_judge_gold_schema(dataset_dir: Path | None = None) -> CheckResult:
+    """The judge gold set has its own contract: a labelled answer per row.
+
+    It is deliberately *not* a scenario: there is no graph to drive. What it does
+    need is a human label on every row (otherwise kappa is computed on nothing)
+    and an explicit annotator (D09 §5.2 「与人工盲评校准」).
+    """
+
+    root = dataset_dir or DATASET_DIR
+    path = root / "judge_gold.jsonl"
+    if not path.exists():
+        return CheckResult(
+            check_id="L0.judge_gold_schema",
+            layer="L0",
+            title="Judge gold 数据集 schema",
+            passed=False,
+            detail="缺少 judge_gold.jsonl，Judge 无法校准",
+        )
+
+    failures: list[str] = []
+    rows = 0
+    dimensions: dict[str, int] = {}
+    for row in _iter_jsonl(path):
+        rows += 1
+        row_id = str(row.get("id"))
+        for field in ("id", "dimension", "answer"):
+            if not row.get(field):
+                failures.append(f"{row_id} 缺字段 {field}")
+        if row.get("human_score") is None:
+            failures.append(f"{row_id} 缺 human_score（无法参与 kappa 校准）")
+        elif int(row["human_score"]) not in (0, 1):
+            failures.append(f"{row_id} human_score={row['human_score']} 非 0/1")
+        if not row.get("human_annotator"):
+            failures.append(f"{row_id} 缺 human_annotator（无法追溯标注人）")
+        dimensions[str(row.get("dimension"))] = dimensions.get(str(row.get("dimension")), 0) + 1
+
+    return CheckResult(
+        check_id="L0.judge_gold_schema",
+        layer="L0",
+        title="Judge gold 数据集 schema",
+        passed=not failures,
+        detail=(
+            f"{rows} 行全部合规（维度 {dimensions}）"
+            if not failures
+            else f"{len(failures)} 处问题，例如 " + "; ".join(failures[:6])
+        ),
+        data={"rows": rows, "dimensions": dimensions, "failures": failures[:40]},
+    )
+
+
+def check_feedback_schema(dataset_dir: Path | None = None) -> CheckResult:
+    """Promoted online-review cases must keep their provenance.
+
+    ``regression_feedback.jsonl`` is produced by ``scripts/promote_reviewed.py``
+    from already-approved queue items, so every row *should* carry a reviewer
+    and a stated correct behaviour. This check is the independent verification:
+    it re-derives the contract from the stored file rather than trusting the
+    promotion script. A file that does not exist yet is not a failure — the loop
+    simply has not promoted anything.
+    """
+
+    root = dataset_dir or DATASET_DIR
+    path = root / "regression_feedback.jsonl"
+    if not path.exists():
+        return CheckResult(
+            check_id="L0.feedback_schema",
+            layer="L0",
+            title="线上复核晋升用例 schema",
+            passed=True,
+            detail="尚未晋升任何线上用例（不适用）",
+            data={"rows": 0, "failures": []},
+        )
+
+    required = ("id", "type", "split", "version", "source_trace_id", "reviewer", "correct_behaviour")
+    failures: list[str] = []
+    rows = 0
+    runnable = 0
+    for row in _iter_jsonl(path):
+        rows += 1
+        row_id = str(row.get("id"))
+        if not row_id.startswith("fb_"):
+            failures.append(f"{row_id} 晋升用例 id 必须带 fb_ 前缀")
+        for field in required:
+            if not str(row.get(field) or "").strip():
+                failures.append(f"{row_id} 缺字段 {field}")
+        if row.get("split") != "regression":
+            failures.append(f"{row_id} 晋升用例 split 必须是 regression，实际 {row.get('split')!r}")
+        origin = row.get("origin")
+        if not isinstance(origin, dict) or origin.get("kind") != "online_review":
+            failures.append(f"{row_id} origin.kind 必须是 online_review")
+        if str(row.get("type")) == "agent_planning":
+            runnable += 1
+            if not row.get("input"):
+                failures.append(f"{row_id} 可执行用例缺 input")
+
+    return CheckResult(
+        check_id="L0.feedback_schema",
+        layer="L0",
+        title="线上复核晋升用例 schema",
+        passed=not failures,
+        detail=(
+            f"{rows} 行晋升用例合规（可执行 {runnable} 行）"
+            if not failures
+            else f"{len(failures)} 处问题，例如 " + "; ".join(failures[:6])
+        ),
+        data={"rows": rows, "runnable": runnable, "failures": failures[:40]},
+    )
+
+
+async def check_fault_scenario_schema(dataset_dir: Path | None = None) -> CheckResult:
+    """A fault scenario must be able to fail; otherwise it is decoration.
+
+    This check exists because of a real bug: an early version of
+    ``fault_scenarios.jsonl`` faulted a tool that did not exist in the target
+    step, so the fault never fired and the scenario "passed" by measuring
+    nothing. Every assertion below targets a way a scenario can be *vacuous*
+    rather than wrong:
+
+    - a fault target that is not in the step's candidate tools never fires;
+    - a ``script`` step naming a tool outside the candidate set is dropped;
+    - a ``no_fabrication`` key that is not a real state field can never be
+      populated, so the assertion is always true.
+    """
+
+    root = dataset_dir or DATASET_DIR
+    path = root / "fault_scenarios.jsonl"
+    if not path.exists():
+        return CheckResult(
+            check_id="L0.fault_scenario_schema",
+            layer="L0",
+            title="故障注入场景 schema（每条都必须真的能失败）",
+            passed=True,
+            detail="无故障注入场景（不适用）",
+            data={"rows": 0, "failures": []},
+        )
+
+    from app.core.state import TravelState
+    from app.observability.trace import STATE_SNAPSHOT_KEYS
+
+    from evals.faults import KINDS
+
+    step_config = await get_step_config()
+    step_tools: dict[str, set[str]] = {
+        name: {getattr(tool, "name", "") for tool in config.get("tools", []) if getattr(tool, "name", None)}
+        for name, config in step_config.items()
+    }
+    valid_state_keys = set(STATE_SNAPSHOT_KEYS) | set(TravelState.model_fields)
+
+    failures: list[str] = []
+    rows = 0
+    for row in _iter_jsonl(path):
+        rows += 1
+        row_id = str(row.get("id"))
+        step = str((row.get("initial_state") or {}).get("current_step") or "")
+        allowed = step_tools.get(step, set())
+        if not allowed:
+            failures.append(f"{row_id} initial_state.current_step={step!r} 不是有效步骤")
+            continue
+
+        faults = row.get("faults") or []
+        if not faults:
+            failures.append(f"{row_id} 未声明任何故障，不应出现在 fault_scenarios 里")
+        for fault in faults:
+            kind = str((fault or {}).get("kind") or "")
+            target = str((fault or {}).get("target") or "")
+            if kind not in KINDS:
+                failures.append(f"{row_id} 未知故障类型 {kind!r}（合法：{list(KINDS)}）")
+            if target != "*" and target not in allowed:
+                failures.append(
+                    f"{row_id} 故障目标 {target!r} 不在 {step} 的候选工具内 → 永远不会触发"
+                )
+
+        for script_step in row.get("script") or []:
+            tool = str((script_step or {}).get("tool") or "")
+            if tool and tool not in allowed:
+                failures.append(f"{row_id} script 调用 {tool!r}，不在 {step} 的候选工具内")
+
+        expectations = row.get("expectations") or {}
+        for key in expectations.get("no_fabrication") or []:
+            if str(key) not in valid_state_keys:
+                failures.append(
+                    f"{row_id} no_fabrication 里的 {key!r} 不是真实 state 字段 → 该断言恒真"
+                )
+        for tool in (expectations.get("max_calls") or {}):
+            if str(tool) not in allowed:
+                failures.append(f"{row_id} max_calls 限制的 {tool!r} 不在候选工具内")
+
+        if row.get("negative_control") and not (row.get("expect_failures") or []):
+            failures.append(f"{row_id} 标了 negative_control 但没写 expect_failures")
+
+    return CheckResult(
+        check_id="L0.fault_scenario_schema",
+        layer="L0",
+        title="故障注入场景 schema（每条都必须真的能失败）",
+        passed=not failures,
+        detail=(
+            f"{rows} 条故障场景均可触发"
+            if not failures
+            else f"{len(failures)} 处问题，例如 " + "; ".join(failures[:6])
+        ),
+        data={"rows": rows, "failures": failures[:40]},
+    )
+
+
 CHECK_FUNCTIONS: tuple[Callable[[], Any], ...] = (
     check_step_requires_matrix,
     check_route_robustness,
@@ -847,4 +1079,7 @@ async def run_l0_checks() -> list[CheckResult]:
             )
     results.append(check_capability_vocabulary())
     results.append(check_dataset_schema())
+    results.append(check_judge_gold_schema())
+    results.append(check_feedback_schema())
+    results.append(await check_fault_scenario_schema())
     return results

@@ -85,6 +85,37 @@ CONSTRAINT_TO_STYLE = {
 }
 
 
+#: Version for the known-gap table below. Bump together with any edit so a
+#: silently-added exemption shows up as a reviewable diff (D09 §7.4).
+CONTENT_KNOWN_GAPS_VERSION = "1.0"
+
+#: check_id -> (reason, ref). These failures are **documented, pre-existing**
+#: limitations rather than regressions. They are still reported, but excluded
+#: from the regression gate. Anything not listed here stays a hard failure.
+CONTENT_KNOWN_GAPS: dict[str, tuple[str, str]] = {
+    "L1.external_source_coverage": (
+        "确定性模式下行程由纯代码 planner 生成、不携带外部来源；只有 live/replay 才可能具备",
+        "docs/design/eval-optimization-roadmap.md §7 不做清单 #1",
+    ),
+    "L1.budget_constraint": (
+        "确定性预算估算不反推用户预算上限，低预算用例必然超出；属待修行为",
+        "docs/design/eval-optimization-roadmap.md §8 风险表",
+    ),
+    "L1.required_args_present": (
+        "required_args 与用例文本的字面一致性 lint，属数据质量问题而非 Agent 行为",
+        "evals/datasets/README.md",
+    ),
+    "L1.capability_available": (
+        "能力已在词表但无对应 MCP server 实现（构建缺口），接上真实 server 前不作回归目标",
+        "docs/design/eval-optimization-roadmap.md §8 风险表",
+    ),
+    "L1.rag_entity_recall": (
+        "本地离线语料未覆盖该实体；这是语料覆盖度缺口，而非检索质量退化",
+        "evals/datasets/README.md",
+    ),
+}
+
+
 # ---------------------------------------------------------------------------
 # text extraction (deterministic, no model)
 # ---------------------------------------------------------------------------
@@ -110,8 +141,7 @@ _PARTY_PATTERNS = (
 )
 
 #: Fallback gazetteer, used only when the regexes find nothing.
-_CITY_GAZETTEER = (
-    "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "重庆", "西安", "厦门",
+_CITY_GAZETTEER = (    "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "重庆", "西安", "厦门",
     "苏州", "青岛", "天津", "哈尔滨", "长沙", "武汉", "昆明", "大理", "丽江", "桂林",
     "三亚", "济南", "郑州", "沈阳", "大连", "福州", "南昌", "合肥", "太原", "兰州",
     "拉萨", "西宁", "银川", "乌鲁木齐", "呼和浩特", "贵阳", "南宁", "海口", "珠海",
@@ -454,15 +484,56 @@ class ContentOutcome:
     latency_ms: float = 0.0
 
     @property
+    def hard_failed_checks(self) -> list[str]:
+        """Failures that are *not* a documented gap — the ones that gate."""
+
+        return sorted(
+            {check.check_id for check in self.checks if not check.passed and not check.known_gap}
+        )
+
+    @property
+    def gap_checks(self) -> list[CheckResult]:
+        return [check for check in self.checks if not check.passed and check.known_gap]
+
+    @property
     def passed(self) -> bool:
-        return self.executed and all(check.passed for check in self.checks)
+        """Strict: *every* check passed. A documented gap still counts as fail."""
+
+        return self.executed and not self.failed_checks
+
+    @property
+    def known_gap(self) -> bool:
+        """A documented, pre-existing gap — failed, but not a regression."""
+
+        return self.executed and bool(self.gap_checks) and not self.hard_failed_checks
+
+    @property
+    def known_gap_ref(self) -> str:
+        gaps = self.gap_checks
+        return gaps[0].known_gap_ref if gaps else ""
+
+    @property
+    def known_gap_reason(self) -> str:
+        gaps = self.gap_checks
+        return gaps[0].title if gaps else ""
 
     @property
     def failed_checks(self) -> list[str]:
+        """All failing check ids, gap or not — used for the per-case detail line."""
+
         return sorted({check.check_id for check in self.checks if not check.passed})
 
 
-def _result(check_id: str, title: str, passed: bool, detail: str = "", data: dict | None = None, layer: str = "L1") -> CheckResult:
+def _result(
+    check_id: str,
+    title: str,
+    passed: bool,
+    detail: str = "",
+    data: dict | None = None,
+    layer: str = "L1",
+    known_gap: bool = False,
+    known_gap_ref: str = "",
+) -> CheckResult:
     return CheckResult(
         check_id=check_id,
         layer=layer,
@@ -470,6 +541,8 @@ def _result(check_id: str, title: str, passed: bool, detail: str = "", data: dic
         passed=passed,
         detail=detail,
         data=data or {},
+        known_gap=known_gap,
+        known_gap_ref=known_gap_ref,
     )
 
 
@@ -603,6 +676,8 @@ async def run_travel_probe(
                 "预算约束被满足",
                 score >= 0.99,
                 f"budget_constraint={score:.2f}",
+                known_gap=True,
+                known_gap_ref=CONTENT_KNOWN_GAPS["L1.budget_constraint"][1],
             )
         )
 
@@ -616,6 +691,8 @@ async def run_travel_probe(
                 coverage > 0.0,
                 f"external_source_coverage={coverage:.2f}"
                 "（0 表示行程全部来自 planner，未消费任何工具返回）",
+                known_gap=True,
+                known_gap_ref=CONTENT_KNOWN_GAPS["L1.external_source_coverage"][1],
             )
         )
 
@@ -674,21 +751,32 @@ async def run_mcp_probe(
     missing_required = [
         capability for capability in required if capability not in available
     ]
+    # Split the miss into two very different things:
+    #   * a capability that exists in the vocabulary but has no loaded tool —
+    #     a build gap (no server), not an agent regression (roadmap §8);
+    #   * a capability that is not even in the vocabulary — a dataset error.
+    unbacked = [cap for cap in missing_required if cap in KNOWN_TOOL_VOCABULARY]
+    unknown = [cap for cap in missing_required if cap not in KNOWN_TOOL_VOCABULARY]
     # A capability with no server is acceptable only when the row says the
     # correct behaviour is to fall back.
     fallback_ok = bool(row.get("fallback_expected"))
+    capability_ok = (not missing_required) or fallback_ok
     checks.append(
         _result(
             "L1.capability_available",
             "必需能力有可用工具（或声明了兜底）",
-            not missing_required or fallback_ok,
+            capability_ok,
             (
                 "全部必需能力均可用"
                 if not missing_required
                 else f"缺失 {missing_required}"
                 + ("（该行声明 fallback_expected=true，视为可接受）" if fallback_ok else "")
+                + (f"；其中 {len(unbacked)} 项为词表内但无实现（构建缺口）" if unbacked else "")
+                + (f"；{unknown} 不在词表内（数据错误）" if unknown else "")
             ),
             {"expected": expected, "missing": missing_required, "fallback_expected": fallback_ok},
+            known_gap=bool(unbacked) and not unknown and not fallback_ok,
+            known_gap_ref=CONTENT_KNOWN_GAPS["L1.capability_available"][1],
         )
     )
 
@@ -737,6 +825,8 @@ async def run_mcp_probe(
                 else f"文本中找不到: {unevidenced}（数据自洽性问题）"
             ),
             {"required_args": required_args, "unevidenced": unevidenced},
+            known_gap=True,
+            known_gap_ref=CONTENT_KNOWN_GAPS["L1.required_args_present"][1],
         )
     )
 
@@ -842,6 +932,12 @@ def run_rag_probe(
     requires_sources = bool(row.get("requires_sources"))
     fallback_expected = bool(row.get("fallback_expected"))
 
+    # Does the *corpus itself* mention the entity at all? A miss on an entity the
+    # corpus never contained is a coverage gap (a fixture problem); a miss on an
+    # entity that *is* in the corpus is a retrieval failure (a real regression).
+    corpus_haystack = "\n".join(text for _, text in index.documents)
+    in_corpus = [entity for entity in entities if entity and entity in corpus_haystack]
+
     checks: list[CheckResult] = []
 
     # --- entity recall ---------------------------------------------------
@@ -857,6 +953,7 @@ def run_rag_probe(
         )
     else:
         # A miss is only a failure when the row does not expect a fallback.
+        coverage_miss = not in_corpus
         checks.append(
             _result(
                 "L1.rag_entity_recall",
@@ -865,9 +962,20 @@ def run_rag_probe(
                 (
                     "语料未覆盖该实体，但该行声明 fallback_expected=true，判定为应兜底"
                     if fallback_expected
-                    else "语料未覆盖该实体，且该行未声明兜底 → 无法满足"
+                    else (
+                        "本地语料本身不含该实体 → 语料覆盖度缺口"
+                        if coverage_miss
+                        else "实体在语料中，但未被检索到 → 检索质量问题"
+                    )
                 ),
-                {"expected": entities, "retrieved": [r["source"] for r in results]},
+                {
+                    "expected": entities,
+                    "in_corpus": in_corpus,
+                    "coverage_miss": coverage_miss,
+                    "retrieved": [r["source"] for r in results],
+                },
+                known_gap=coverage_miss,
+                known_gap_ref=CONTENT_KNOWN_GAPS["L1.rag_entity_recall"][1],
             )
         )
 

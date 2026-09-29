@@ -49,7 +49,10 @@ class Thresholds:
     #: P95 wall-clock budget per case.
     max_p95_latency_ms: float = 30_000.0
     #: Per-case cost ceiling. Tokens stand in for money until a price table exists.
+    #: A multi-turn case is budgeted per *turn* instead, so an 8-turn scenario is
+    #: never failed for doing more work than a 1-turn one.
     max_llm_calls_per_case: int = 12
+    max_llm_calls_per_turn: float = 3.0
     max_tokens_per_case: int = 60_000
     #: How far a suite may drop versus its recorded baseline.
     max_drop_vs_baseline_pt: float = 2.0
@@ -246,7 +249,7 @@ def evaluate_gates(
     over_calls = [
         case
         for case in cases
-        if int((case.get("cost") or {}).get("llm_calls") or 0) > th.max_llm_calls_per_case
+        if int((case.get("cost") or {}).get("llm_calls") or 0) > call_budget(case, th)
     ]
     outcomes.append(
         GateOutcome(
@@ -255,17 +258,48 @@ def evaluate_gates(
             (
                 "单任务调用次数在预算内"
                 if not over_calls
-                else f"{len(over_calls)} 例超出 {th.max_llm_calls_per_case} 次"
+                else f"{len(over_calls)} 例超出调用预算"
+                + "（单轮 {} 次，多轮 {} 次/轮）".format(
+                    th.max_llm_calls_per_case, th.max_llm_calls_per_turn
+                )
             ),
             {
                 "max_llm_calls_per_case": th.max_llm_calls_per_case,
+                "max_llm_calls_per_turn": th.max_llm_calls_per_turn,
                 "max_tokens_per_case": th.max_tokens_per_case,
-                "over": [c["case_id"] for c in over_calls][:10],
+                "over": [
+                    {
+                        "case_id": c["case_id"],
+                        "llm_calls": int((c.get("cost") or {}).get("llm_calls") or 0),
+                        "budget": call_budget(c, th),
+                    }
+                    for c in over_calls
+                ][:10],
             },
         )
     )
 
     return outcomes
+
+
+def call_budget(case: dict[str, Any], thresholds: Thresholds) -> float:
+    """Resolve a case's LLM-call budget, scaling by turn count when known.
+
+    A multi-turn scenario legitimately makes more model calls; budgeting it with
+    the single-turn ceiling would fail it for doing the work it was written to
+    do. The turn count comes from ``metadata`` so both the multiturn and content
+    suites feed the same gate.
+    """
+
+    metadata = case.get("metadata") or {}
+    turns = metadata.get("turn_count") or metadata.get("turns") or 1
+    try:
+        turns = max(1, int(turns))
+    except (TypeError, ValueError):
+        turns = 1
+    if turns <= 1:
+        return float(thresholds.max_llm_calls_per_case)
+    return max(float(thresholds.max_llm_calls_per_case), thresholds.max_llm_calls_per_turn * turns)
 
 
 def percentile(values: list[float], pct: float) -> float:

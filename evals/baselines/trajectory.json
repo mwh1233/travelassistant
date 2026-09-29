@@ -1,0 +1,36 @@
+{
+  "total": 10,
+  "pass_at_1": 9,
+  "pass_pow_k": 9,
+  "known_gaps": 1,
+  "failures": 0,
+  "scored": 9,
+  "by_split": {
+    "regression": {
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "known_gap": 0,
+      "success_rate": 1.0
+    },
+    "safety": {
+      "total": 2,
+      "passed": 1,
+      "failed": 0,
+      "known_gap": 1,
+      "success_rate": 1.0
+    },
+    "challenge": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "known_gap": 0,
+      "success_rate": 1.0
+    }
+  },
+  "meta": {
+    "git_sha": "8b33eb9",
+    "mode": "deterministic",
+    "thresholds_version": "0.1.0"
+  }
+}

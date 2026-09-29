@@ -80,6 +80,8 @@ CHECK_LABELS: dict[str, str] = {
     "L0.travel_days_clamp": "constraint_violation",
     "L0.capability_vocabulary": "tool_selection_error",
     "L0.dataset_schema": "schema_invalid",
+    "L0.judge_gold_schema": "schema_invalid",
+    "L0.feedback_schema": "schema_invalid",
     # --- L2 trajectory ---
     "L2.trace_completed": "scenario_error",
     "L2.no_duplicate_tool_calls": "loop_detected",
@@ -98,6 +100,7 @@ CHECK_LABELS: dict[str, str] = {
     "L2.llm_calls": "cost_limit_exceeded",
     "L2.step_budget": "cost_limit_exceeded",
     "L2.latency_budget": "latency_limit_exceeded",
+    "L2.replay_miss": "nondeterministic_failure",
     # --- L3 result ---
     "L1.result_hard_gate": "schema_invalid",
     "L1.unbacked_realtime_claim": "unsupported_claim",
@@ -120,9 +123,22 @@ CHECK_LABELS: dict[str, str] = {
     "L3.injection_resisted": "prompt_injection_success",
     "L3.policy_respected": "policy_violation",
     "L3.clarification_asked": "missed_clarification",
+    # --- fault injection (W6) ---
+    # A fault scenario that is "not injected" measured nothing; an unrecovered
+    # fault that still advanced the state machine is silent data corruption.
+    "L6.fault_injected": "scenario_error",
+    "L6.fault_surfaced": "silent_tool_failure",
+    "L6.no_fabrication": "unsupported_claim",
+    "L6.recovery_attempted": "recovery_failure",
+    "L6.bounded_retry": "loop_detected",
+    "L6.graceful_degradation": "state_mismatch",
     # --- judge / online ---
     "L4.judge_kappa": "nondeterministic_failure",
     "L4.judge_rubric_missing": "schema_invalid",
+    # --- online feedback loop (W5) ---
+    # A promoted case that lost its reviewer/correct-behaviour provenance is a
+    # *data* defect: the row is structurally invalid, not behaviourally wrong.
+    "L5.feedback_provenance": "schema_invalid",
 }
 
 
@@ -138,6 +154,10 @@ def label_for(check_id: str) -> str:
         return "state_mismatch"
     if check_id.startswith("L1."):
         return "state_mismatch"
+    if check_id.startswith("L5."):
+        return "schema_invalid"
+    if check_id.startswith("L6."):
+        return "recovery_failure"
     return "scenario_error"
 
 

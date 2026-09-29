@@ -52,6 +52,7 @@ from app.agents.handoffs import step_config as step_config_module
 from app.observability.trace import TraceCollector, tee_events
 from app.utils.logger import app_logger
 from evals.cassette import Cassette, CassetteMiss, load_cassette
+from evals.faults import FaultInjector, apply_fault
 from evals.mock_llm import ScriptedChatModel, build_responses
 
 
@@ -122,16 +123,28 @@ def make_stub(
     recorder: ToolCallRecorder,
     description: str = "",
     cassette: Cassette | None = None,
+    injector: "FaultInjector | None" = None,
 ) -> BaseTool:
     """Build a same-named deterministic replacement for an external tool.
 
     In ``record`` mode the observed response is persisted; in ``replay`` mode the
     response is read back, and a missing entry raises rather than degrading.
+
+    ``injector`` is consulted *after* the call is recorded but *before* the stub
+    answers, so an injected fault replaces the tool's real behaviour while the
+    call itself stays visible to every trajectory assertion. Replay is checked
+    after the injector on purpose: a fault scenario must behave identically in
+    ``deterministic`` and ``replay`` mode, otherwise the two are not comparable.
     """
 
     def _run(**kwargs: Any) -> str:
         cleaned = {key: value for key, value in kwargs.items() if key != "reserved"}
         recorder.record(name, cleaned)
+
+        if injector is not None:
+            event = injector.next_fault(name, cleaned)
+            if event is not None:
+                return apply_fault(event)
 
         if cassette is not None and cassette.mode == "replay":
             recorded = cassette.lookup(name, cleaned)
@@ -188,6 +201,7 @@ def apply_tool_overrides(
     stub_responses: dict[str, str],
     recorder: ToolCallRecorder,
     cassette: Cassette | None = None,
+    injector: FaultInjector | None = None,
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Replace every non-deterministic tool with a same-named stub.
 
@@ -213,6 +227,7 @@ def apply_tool_overrides(
                     recorder=recorder,
                     description=getattr(tool, "description", "") or "",
                     cassette=cassette,
+                    injector=injector,
                 )
             )
             stubbed.add(name)
@@ -233,6 +248,8 @@ class ScenarioOutcome:
     turns: list[dict[str, Any]] = field(default_factory=list)
     latency_ms: float = 0.0
     cassette: dict[str, Any] = field(default_factory=dict)
+    faults: dict[str, Any] = field(default_factory=dict)
+    """Fault-injection record (``{}`` when no fault was planned)."""
 
     @property
     def tool_names(self) -> list[str]:
@@ -299,11 +316,15 @@ async def run_turns(
     cassette_mode: str = "off",
     cassette_dir: Path | None = None,
     code_sha: str = "",
+    injector: FaultInjector | None = None,
 ) -> ScenarioOutcome:
     """Run N turns on one thread and return the merged trajectory + final state.
 
     Each turn dict accepts ``input`` / ``script`` / ``final_content``. The first
     turn also seeds ``initial_state`` from the scenario.
+
+    ``injector`` (W6) faults stubbed tools on a fixed schedule so degradation —
+    not just the happy path — can be graded reproducibly.
     """
 
     import app.agents.graphs.travel_planner_graph as graph_module
@@ -320,7 +341,7 @@ async def run_turns(
     stub_responses = scenario.get("tool_stubs") or {}
     if mode in ("deterministic", "replay"):
         step_config, stubbed_tools = apply_tool_overrides(
-            base_config, stub_responses, recorder, cassette
+            base_config, stub_responses, recorder, cassette, injector
         )
     else:
         step_config, stubbed_tools = base_config, []
@@ -443,6 +464,7 @@ async def run_turns(
             turns=turn_records,
             latency_ms=round((time.time() - started) * 1000, 2),
             cassette={**cassette.summary(), "saved": str(saved) if saved else None},
+            faults=injector.to_dict() if injector is not None else {},
         )
     finally:
         graph_module.get_step_config = original_get_step_config
@@ -473,6 +495,7 @@ async def run_scenario(
     cassette_mode: str = "off",
     cassette_dir: Path | None = None,
     code_sha: str = "",
+    injector: FaultInjector | None = None,
 ) -> ScenarioOutcome:
     """Run one scenario end to end (single-turn special case of ``run_turns``)."""
 
@@ -492,4 +515,5 @@ async def run_scenario(
         cassette_mode=cassette_mode,
         cassette_dir=cassette_dir,
         code_sha=code_sha,
+        injector=injector,
     )
